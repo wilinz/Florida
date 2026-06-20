@@ -53,15 +53,15 @@ jobs:
 
         git clone --recurse-submodules https://github.com/frida/frida
         cd frida
-        git checkout ${{ steps.ver.outputs.FRIDA_VERSION }}
-        git submodule update --init --recursive
+        FRIDA_BUILT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo unknown)
+        echo "FRIDA_BUILT_VERSION=$FRIDA_BUILT_VERSION" >> $GITHUB_ENV
         for path in ../patches/*
         do
           name=$(basename $path)
           real=$(realpath $path)
           echo "Apply patches in $real to frida/subprojects/$name"
           cd subprojects/$name
-          git am ../../../patches/$name/*.patch
+          git am --3way ../../../patches/$name/*.patch
           cd ../..
         done
         cd ..
