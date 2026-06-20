@@ -55,13 +55,21 @@ jobs:
         cd frida
         FRIDA_BUILT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo unknown)
         echo "FRIDA_BUILT_VERSION=$FRIDA_BUILT_VERSION" >> $GITHUB_ENV
+        # 0001 (rpc.vala) 因 frida 加文档注释而漂移, 改用 python 就地替换
+        python3 ../patch_rpc.py subprojects/frida-core/lib/base/rpc.vala
         for path in ../patches/*
         do
           name=$(basename $path)
           real=$(realpath $path)
           echo "Apply patches in $real to frida/subprojects/$name"
           cd subprojects/$name
-          git am --3way ../../../patches/$name/*.patch
+          for pf in ../../../patches/$name/*.patch
+          do
+            case "$(basename $pf)" in
+              0001-Florida-string_frida_rpc.patch) echo "skip $pf (handled by patch_rpc.py)";;
+              *) git am --3way "$pf";;
+            esac
+          done
           cd ../..
         done
         cd ..
