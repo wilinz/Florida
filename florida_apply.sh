@@ -64,6 +64,37 @@ repl "$CORE/lib/base/linux.vala" \
 # frida-gum 0001: gum.c g_set_prgname ("frida") -> ("ggbond")
 repl "$CORE/../frida-gum/gum/gum.c" 'g_set_prgname ("frida")' 'g_set_prgname ("ggbond")'
 
+# frida-gum 0002: 可执行内存走 memfd("jit-cache") 消除匿名可执行段
+#   根治: 梆梆pn等加固扫 /proc/self/maps 找"无文件backing的可执行映射"(匿名rwx/r-x)判定注入。
+#   gum 的 trampoline/代码岛默认 MAP_ANONYMOUS mmap 可执行页 = 匿名可执行段 = 被抓。
+#   改成 memfd(jit-cache) + MAP_SHARED → 显示为 /memfd:jit-cache(deleted), 混进JIT白名单。
+#   注: agent .so 早已memfd化(0009); 此处补 gum 运行时代码分配这块痕迹。
+#   用裸 syscall(__NR_memfd_create) 避开 bionic memfd_create 的 __ANDROID_API__>=30 门槛(同0009思路)。
+GMEM="$CORE/../frida-gum/gum/backend-posix/gummemory-posix.c"
+# (a) 补 sys/syscall.h include (提供 __NR_memfd_create)
+repl "$GMEM" \
+  '#include <sys/mman.h>' \
+  '#include <sys/mman.h>
+#include <sys/syscall.h>'
+# (b) 可执行页走 memfd
+repl "$GMEM" \
+  '  result = mmap (address, size, prot, base_flags | region_flags, -1, 0);' \
+  '  result = MAP_FAILED;
+  if ((prot & PROT_EXEC) != 0)
+  {
+    int _florida_mfd = (int) syscall (__NR_memfd_create, "jit-cache", 0U);
+    if (_florida_mfd != -1)
+    {
+      if (ftruncate (_florida_mfd, size) == 0)
+        result = mmap (address, size, prot,
+            (base_flags & ~(MAP_PRIVATE | MAP_ANONYMOUS)) | MAP_SHARED | region_flags,
+            _florida_mfd, 0);
+      close (_florida_mfd);
+    }
+  }
+  if (result == MAP_FAILED)
+    result = mmap (address, size, prot, base_flags | region_flags, -1, 0);'
+
 # anti-anti-frida.py 后处理 (ELF): 放入 frida-core/src 并挂到 embed-agent.py
 # 注意: 仅对 ELF 生效 (Android/Linux); macOS(Mach-O) 会 lief 解析后 exit(0) 跳过
 cp "$HERE/anti-anti-frida.py" "$CORE/src/anti-anti-frida.py"

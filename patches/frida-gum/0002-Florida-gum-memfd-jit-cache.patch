@@ -1,0 +1,55 @@
+From 7b699d2ce4a281d24420488a0808823649a20575 Mon Sep 17 00:00:00 2001
+From: wilinz <weilizan71@gmail.com>
+Date: Sun, 9 Aug 2026 05:19:08 +0800
+Subject: [PATCH] =?UTF-8?q?Florida:=20gum=20exec=20memory=20via=20memfd(ji?=
+ =?UTF-8?q?t-cache)=20=E2=80=94=20hide=20anonymous=20executable=20mappings?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+梆梆pn等加固扫 /proc/self/maps 找无文件backing的可执行映射(匿名rwx/r-x)判定注入。
+gum 的 trampoline/代码岛默认 MAP_ANONYMOUS 分配可执行页 = 匿名可执行段 = 被抓。
+改用 memfd(jit-cache)+MAP_SHARED → 显示为 /memfd:jit-cache(deleted), 混进JIT白名单。
+agent .so 已memfd化(0009); 此补 gum 运行时代码分配这块痕迹。
+---
+ gum/backend-posix/gummemory-posix.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/gum/backend-posix/gummemory-posix.c b/gum/backend-posix/gummemory-posix.c
+index 1db7bcc..cafa763 100644
+--- a/gum/backend-posix/gummemory-posix.c
++++ b/gum/backend-posix/gummemory-posix.c
+@@ -12,6 +12,7 @@
+ #include <errno.h>
+ #include <unistd.h>
+ #include <sys/mman.h>
++#include <sys/syscall.h>
+ 
+ typedef struct _GumAllocNearContext GumAllocNearContext;
+ typedef struct _GumEnumerateFreeRangesContext GumEnumerateFreeRangesContext;
+@@ -227,7 +228,21 @@ gum_allocate_page_aligned (gpointer address,
+   }
+ #endif
+ 
+-  result = mmap (address, size, prot, base_flags | region_flags, -1, 0);
++  result = MAP_FAILED;
++  if ((prot & PROT_EXEC) != 0)
++  {
++    int _florida_mfd = (int) syscall (__NR_memfd_create, "jit-cache", 0U);
++    if (_florida_mfd != -1)
++    {
++      if (ftruncate (_florida_mfd, size) == 0)
++        result = mmap (address, size, prot,
++            (base_flags & ~(MAP_PRIVATE | MAP_ANONYMOUS)) | MAP_SHARED | region_flags,
++            _florida_mfd, 0);
++      close (_florida_mfd);
++    }
++  }
++  if (result == MAP_FAILED)
++    result = mmap (address, size, prot, base_flags | region_flags, -1, 0);
+ 
+ #if defined (HAVE_FREEBSD) && GLIB_SIZEOF_VOID_P == 8
+   if (result == MAP_FAILED && (region_flags & MAP_32BIT) != 0)
+-- 
+2.50.1 (Apple Git-155)
+
